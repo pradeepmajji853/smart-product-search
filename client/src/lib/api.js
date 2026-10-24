@@ -38,3 +38,5 @@ export const fetchProducts = (queryString, signal) =>
 
 export const fetchFilterOptions = (category, signal) =>
   getJson(`/api/filters${category ? `?${new URLSearchParams({ category })}` : ''}`, signal);
+
+export const fetchSuggestions = (q, signal) => getJson(`/api/suggestions?${new URLSearchParams({ q })}`, signal);

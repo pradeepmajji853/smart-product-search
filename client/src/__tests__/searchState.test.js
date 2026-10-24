@@ -5,11 +5,16 @@ describe('URL search state', () => {
   it('round-trips every field through the query string', () => {
     const state = {
       q: 'sony headphones', category: 'Audio', brands: ['Bose', 'Sony'], minPrice: '100', maxPrice: '500.5',
-      minRating: '4', inStock: true, sort: 'price_desc', page: 3,
+      minRating: '4', inStock: true, sort: 'price_desc', page: 3, exact: true,
     };
     const search = toSearchString(state);
-    expect(search).toBe('q=sony+headphones&category=Audio&brand=Bose&brand=Sony&minPrice=100&maxPrice=500.5&minRating=4&inStock=true&sort=price_desc&page=3');
+    expect(search).toBe('q=sony+headphones&category=Audio&brand=Bose&brand=Sony&minPrice=100&maxPrice=500.5&minRating=4&inStock=true&sort=price_desc&page=3&exact=true');
     expect(parseSearchState(`?${search}`)).toEqual(state);
+  });
+
+  it('only keeps exact=true together with a keyword', () => {
+    expect(parseSearchState('?exact=true').exact).toBe(false);
+    expect(toSearchString({ ...DEFAULT_STATE, exact: true })).toBe('');
   });
 
   it('omits default values', () => {

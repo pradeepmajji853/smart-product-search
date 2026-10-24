@@ -12,7 +12,7 @@ import { formatCount, formatPrice } from './lib/format.js';
 
 function activeChips(state) {
   const chips = [];
-  if (state.q) chips.push({ key: 'q', label: `“${state.q}”`, patch: { q: '' } });
+  if (state.q) chips.push({ key: 'q', label: `“${state.q}”`, patch: { q: '', exact: false } });
   if (state.category) chips.push({ key: 'category', label: state.category, patch: { category: '' } });
   for (const brand of state.brands) {
     chips.push({ key: `brand-${brand}`, label: brand, patch: { brands: state.brands.filter((b) => b !== brand) } });
@@ -34,8 +34,9 @@ function activeChips(state) {
 export default function App() {
   const { state, update, clearAll, syncKey } = useUrlState();
   // Chips that clear a text input need the input to re-initialise too.
-  const [chipSync, setChipSync] = useState(0);
-  const inputKey = `${syncKey}-${chipSync}`;
+  // Bumped whenever the search box must re-initialise from state (chip removal, picking a suggestion).
+  const [inputSync, setInputSync] = useState(0);
+  const inputKey = `${syncKey}-${inputSync}`;
   const apiQuery = useMemo(() => toSearchString(state), [state]);
   const products = useProducts(apiQuery);
   const filterOptions = useFilterOptions(state.category);
@@ -45,7 +46,18 @@ export default function App() {
   const loading = status === 'loading';
   const hasCriteria = hasActiveCriteria(state);
   const chips = activeChips(state);
-  const terms = state.q.split(/\s+/).filter(Boolean);
+  const { correctedQuery } = products;
+  // Highlight what the results were actually matched against.
+  const terms = (correctedQuery || state.q).split(/\s+/).filter(Boolean);
+
+  // A new keyword always re-enables typo correction.
+  const searchFor = (q) => update({ q, exact: false });
+  const selectSuggestion = (suggestion) => {
+    if (suggestion.type === 'brand') update({ q: '', exact: false, brands: [suggestion.value] });
+    else if (suggestion.type === 'category') update({ q: '', exact: false, category: suggestion.value });
+    else searchFor(suggestion.value);
+    setInputSync((n) => n + 1);
+  };
 
   const goToPage = (page) => {
     update({ page });
@@ -99,7 +111,7 @@ export default function App() {
           <a href="/" className="shrink-0 text-lg font-bold tracking-tight text-slate-900">
             Product<span className="text-indigo-600">Catalogue</span>
           </a>
-          <SearchInput key={`q-${inputKey}`} initialValue={state.q} onCommit={(q) => update({ q })} />
+          <SearchInput key={`q-${inputKey}`} initialValue={state.q} onCommit={searchFor} onSelectSuggestion={selectSuggestion} />
         </div>
       </header>
 
@@ -164,7 +176,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       update(chip.patch);
-                      if (chip.key === 'q' || chip.resync) setChipSync((n) => n + 1);
+                      if (chip.key === 'q' || chip.resync) setInputSync((n) => n + 1);
                     }}
                     className="flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
                     aria-label={`Remove filter ${chip.label}`}
@@ -174,6 +186,15 @@ export default function App() {
                 </li>
               ))}
             </ul>
+          )}
+
+          {correctedQuery && status !== 'error' && (
+            <p role="status" className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              No results for <strong>“{state.q}”</strong>. Showing results for <strong>“{correctedQuery}”</strong>.{' '}
+              <button type="button" onClick={() => update({ exact: true })} className="font-medium text-indigo-700 underline">
+                Search instead for “{state.q}”
+              </button>
+            </p>
           )}
 
           {content}

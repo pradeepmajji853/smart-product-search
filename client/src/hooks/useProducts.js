@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchProducts } from '../lib/api.js';
 
-const INITIAL = { status: 'loading', data: [], pagination: null, error: null };
+const INITIAL = { status: 'loading', data: [], pagination: null, correctedQuery: null, error: null };
 
 // Fetches a page of products for the given API query string.
 //
@@ -23,7 +23,13 @@ export function useProducts(queryString) {
     fetchProducts(queryString, controller.signal)
       .then((body) => {
         if (requestId !== latestRequestId.current) return;
-        setResult({ status: 'success', data: body.data, pagination: body.pagination, error: null });
+        setResult({
+          status: 'success',
+          data: body.data,
+          pagination: body.pagination,
+          correctedQuery: body.correctedQuery ?? null,
+          error: null,
+        });
       })
       .catch((error) => {
         if (error.name === 'AbortError' || requestId !== latestRequestId.current) return;

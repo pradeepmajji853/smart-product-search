@@ -16,6 +16,7 @@ function installFakeApi() {
   const fetchMock = vi.fn(async (url) => {
     const parsed = new URL(url, 'http://localhost');
     if (parsed.pathname === '/api/filters') return { ok: true, status: 200, json: async () => FILTERS };
+    if (parsed.pathname === '/api/suggestions') return { ok: true, status: 200, json: async () => ({ suggestions: [] }) };
     productRequests.push(parsed.searchParams);
     const pageNo = Number(parsed.searchParams.get('page') || 1);
     const label = parsed.searchParams.get('q') || 'item';
@@ -45,11 +46,15 @@ afterEach(() => {
 });
 
 describe('SearchInput debouncing', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ suggestions: [] }) })));
+  });
+
   it('commits only after the user stops typing for 300ms', () => {
     vi.useFakeTimers();
     const onCommit = vi.fn();
-    render(<SearchInput initialValue="" onCommit={onCommit} />);
-    const input = screen.getByRole('searchbox');
+    render(<SearchInput initialValue="" onCommit={onCommit} onSelectSuggestion={vi.fn()} />);
+    const input = screen.getByRole('combobox', { name: 'Search products' });
 
     for (const value of ['s', 'so', 'son', 'sony']) {
       fireEvent.change(input, { target: { value } });
@@ -67,8 +72,8 @@ describe('SearchInput debouncing', () => {
   it('commits immediately on Enter and does not re-commit the same value', () => {
     vi.useFakeTimers();
     const onCommit = vi.fn();
-    render(<SearchInput initialValue="" onCommit={onCommit} />);
-    const input = screen.getByRole('searchbox');
+    render(<SearchInput initialValue="" onCommit={onCommit} onSelectSuggestion={vi.fn()} />);
+    const input = screen.getByRole('combobox', { name: 'Search products' });
     fireEvent.change(input, { target: { value: 'bose ' } });
     fireEvent.submit(input.closest('form'));
     expect(onCommit).toHaveBeenCalledWith('bose');
@@ -83,7 +88,7 @@ describe('App search flow', () => {
     render(<App />);
     await waitFor(() => expect(api.productRequests).toHaveLength(1));
 
-    await userEvent.type(screen.getByRole('searchbox'), 'sony');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search products' }), 'sony');
     await waitFor(() => expect(api.lastQuery()).toBe('q=sony'));
     await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50));
 
@@ -98,7 +103,7 @@ describe('App search flow', () => {
     const api = installFakeApi();
     render(<App />);
 
-    expect(screen.getByRole('searchbox')).toHaveValue('sony');
+    expect(screen.getByRole('combobox', { name: 'Search products' })).toHaveValue('sony');
     expect(screen.getByLabelText('Sort by')).toHaveValue('price_asc');
     expect(screen.getByLabelText('Minimum price')).toHaveValue(10);
     expect(screen.getByLabelText('In stock only')).toBeChecked();
@@ -139,22 +144,22 @@ describe('App search flow', () => {
     render(<App />);
     await screen.findByText(/Showing 1–20/);
 
-    await userEvent.type(screen.getByRole('searchbox'), 'bose');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search products' }), 'bose');
     await waitFor(() => expect(window.location.search).toBe('?q=bose'));
     fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'name_asc' } });
     await waitFor(() => expect(window.location.search).toBe('?q=bose&sort=name_asc'));
 
     act(() => window.history.back());
     await waitFor(() => expect(screen.getByLabelText('Sort by')).toHaveValue('newest'));
-    expect(screen.getByRole('searchbox')).toHaveValue('bose');
+    expect(screen.getByRole('combobox', { name: 'Search products' })).toHaveValue('bose');
     await waitFor(() => expect(api.lastQuery()).toBe('q=bose'));
 
     act(() => window.history.back());
-    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue(''));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search products' })).toHaveValue(''));
     await waitFor(() => expect(api.lastQuery()).toBe(''));
 
     act(() => window.history.forward());
-    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('bose'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search products' })).toHaveValue('bose'));
   });
 
   it('clears the keyword and every filter but keeps the sort order', async () => {
@@ -167,7 +172,7 @@ describe('App search flow', () => {
     fireEvent.click(within(aside).getByRole('button', { name: 'Clear all' }));
     await waitFor(() => expect(api.lastQuery()).toBe('sort=price_asc'));
     expect(window.location.search).toBe('?sort=price_asc');
-    expect(screen.getByRole('searchbox')).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Search products' })).toHaveValue('');
     expect(screen.getByLabelText('Maximum price')).toHaveValue(null);
     expect(screen.getByLabelText('Category')).toHaveValue('');
     expect(screen.getByLabelText('In stock only')).not.toBeChecked();

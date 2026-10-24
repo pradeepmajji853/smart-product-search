@@ -21,6 +21,8 @@ export const DEFAULT_STATE = Object.freeze({
   inStock: false,
   sort: 'newest',
   page: 1,
+  // true = show results for the query exactly as typed, without typo correction.
+  exact: false,
 });
 
 export const isValidPrice = (v) => v === '' || (/^\d+(\.\d+)?$/.test(v) && Number(v) >= 0);
@@ -61,6 +63,7 @@ export function parseSearchState(search) {
     inStock: text('inStock') === 'true',
     sort: SORT_VALUES.includes(sort) ? sort : DEFAULT_STATE.sort,
     page: Number.isInteger(page) && page >= 1 ? page : 1,
+    exact: text('exact') === 'true' && text('q') !== '',
   };
 }
 
@@ -77,6 +80,7 @@ export function toSearchString(state) {
   if (state.inStock) params.set('inStock', 'true');
   if (state.sort !== DEFAULT_STATE.sort) params.set('sort', state.sort);
   if (state.page > 1) params.set('page', String(state.page));
+  if (state.exact && state.q.trim()) params.set('exact', 'true');
   return params.toString();
 }
 
