@@ -23,12 +23,12 @@ The development machine was macOS on an Apple M4, with Node 22.16 and PostgreSQL
 
 ```
 server:  ✓ tests/search.test.js              (25 tests)
-         ✓ tests/sorting-pagination.test.js  (21 tests)
+         ✓ tests/sorting-pagination.test.js  (26 tests)
          ✓ tests/errors.test.js              (10 tests)
          ✓ tests/security.test.js            (16 tests)
          ✓ tests/validation.test.js          (14 tests)
          ✓ tests/seed.test.js                ( 5 tests)
-         Tests  91 passed (91)
+         Tests  96 passed (96)
 
 client:  ✓ src/__tests__/searchState.test.js ( 4 tests)
          ✓ src/__tests__/useProducts.test.jsx ( 4 tests)
@@ -55,6 +55,7 @@ These are real HTTP requests made with Supertest to the Express app, which runs 
 | Rating and stock filters | `search.test.js` | `minRating=4.7` includes the 4.7 products; `inStock=true/false` |
 | All sort options | `sorting-pagination.test.js` | each of the 5 sorts over the whole fixture equals the reference order; price ascending/descending are exact mirrors; default sort is `newest`; sorting is applied to filtered results |
 | Pagination with active criteria | `sorting-pagination.test.js` | walking every page (limit 4) of `q + inStock + minPrice + sort` equals the full expected list; totals and `totalPages` are checked; default page size is 20 and pagination metadata is exact |
+| Sorts can use their indexes | `sorting-pagination.test.js` | for each sort, `EXPLAIN` of the page query (with seq scans disabled) uses the expected B-tree index and has no Sort node; this guards against ORDER BY resolving to a computed output alias |
 | Stable pagination with equal sort values | `sorting-pagination.test.js` | for **each** sort, the 20 identical `Tie Widget` products paged 7 at a time give 3 pages, 20 unique ids in the exact expected order, and repeated requests return the same page |
 | Out-of-range page | `sorting-pagination.test.js` | `page=99` returns `data: []` with `total: 20, totalPages: 3` |
 | Empty results and clearing filters | `search.test.js` | the exact empty response body; removing filters restores the full total; empty parameter values mean "no filter" |
@@ -74,6 +75,7 @@ To check that the tests detect real defects and don't merely pass, two bugs were
 | `escapeLike()` returns its input unchanged (wildcards not escaped) | 4 tests failed (all LIKE-escaping tests) |
 | `id` tie-breaker removed from `price_asc` | 2 tests failed (whole-catalogue order and tie-group paging) |
 | Request-id guard removed from `useProducts` (client) | 1 test failed (`ignores a slow, outdated response…`) |
+| Unqualified ORDER BY (the defect found in the audit) | 3 tests failed (`can serve sort=price_asc/price_desc/rating_desc in index order`) |
 
 ## Frontend tests (`client/src/__tests__/`)
 

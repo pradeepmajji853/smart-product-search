@@ -99,7 +99,7 @@ npm start
 
 ```bash
 npm test               # server + client
-npm run test:server    # 91 PostgreSQL-backed integration tests (needs TEST_DATABASE_URL)
+npm run test:server    # 96 tests, mostly HTTP + real PostgreSQL integration (needs TEST_DATABASE_URL)
 npm run test:client    # 18 React tests (no database needed)
 ```
 

@@ -47,7 +47,7 @@ WHERE search_text ILIKE $1 ESCAPE '\'          -- $1 = '%sony%'
   AND brand = ANY($3::text[])                  -- $3 = {Sony,Bose}
   AND price >= $4                              -- $4 = 1000
   AND in_stock = $5                            -- $5 = true
-ORDER BY price ASC, id ASC
+ORDER BY products.price ASC, products.id ASC
 LIMIT $6 OFFSET $7                             -- 20, 20
 
 SELECT count(*)::int AS total FROM products WHERE <same conditions, same values>
@@ -75,13 +75,15 @@ OFFSET pagination is only correct if the ordering is **total**: no two rows can 
 
 | sort | ORDER BY | Supporting index |
 | --- | --- | --- |
-| `price_asc` | `price ASC, id ASC` | `(price, id)` |
-| `price_desc` | `price DESC, id DESC` | `(price, id)` scanned backwards |
-| `rating_desc` | `rating DESC, id DESC` | `(rating, id)` backwards |
-| `newest` | `created_at DESC, id DESC` | `(created_at, id)` backwards |
-| `name_asc` | `lower(name) COLLATE "C" ASC, id ASC` | `((lower(name) COLLATE "C"), id)` |
+| `price_asc` | `products.price ASC, products.id ASC` | `(price, id)` |
+| `price_desc` | `products.price DESC, products.id DESC` | `(price, id)` scanned backwards |
+| `rating_desc` | `products.rating DESC, products.id DESC` | `(rating, id)` backwards |
+| `newest` | `products.created_at DESC, products.id DESC` | `(created_at, id)` backwards |
+| `name_asc` | `lower(products.name) COLLATE "C" ASC, products.id ASC` | `((lower(name) COLLATE "C"), id)` |
 
-The tie-breaker direction matches the main key so that a single B-tree index scanned forwards or backwards serves the whole ORDER BY. `name_asc` uses `lower(...) COLLATE "C"` so the A–Z order is case-insensitive and identical on every server, independent of the OS locale.
+The tie-breaker direction matches the main key so that a single B-tree index scanned forwards or backwards serves the whole ORDER BY.
+
+**Why the columns are table-qualified.** The SELECT list returns `price::float8 AS price` and `rating::float8 AS rating`, so the JSON contains numbers rather than strings. In PostgreSQL, a bare name in ORDER BY resolves to an *output column alias* before a table column. An unqualified `ORDER BY price` therefore sorted by the computed `float8` expression. The order was still correct, but the `(price, id)` and `(rating, id)` indexes could never be used. The pre-submission audit found this: at 100k rows an unfiltered price sort did a sequential scan and sort (≈14 ms) instead of an index scan (≈0.01 ms warm). Qualifying the columns (`products.price`) fixed it. The test `can serve sort=… in index order` checks the plan for every sort, and it fails on the old SQL. `name_asc` uses `lower(...) COLLATE "C"` so the A–Z order is case-insensitive and identical on every server, independent of the OS locale.
 
 The seed and the test fixture both contain many duplicate prices, ratings and timestamps. The fixture includes 20 products that are identical in **every** sortable column. Tests page through them 7 at a time for every sort order and assert no duplicates, no gaps, and the exact order. When the `id` tie-breaker was removed from `price_asc` as an experiment, those tests failed (see TESTING.md).
 
@@ -154,6 +156,7 @@ Results on the development machine: Apple M4, PostgreSQL 16.14 with the default 
 | Category + price range, sort by price | 0.033 / 0.014 ms | 1.2 / 0.53 ms | Bitmap Index Scan on `category_price_idx` |
 | Keyword + brand + stock + rating, sort by rating | 0.061 / 0.045 ms | 1.8 / 1.5 ms | BitmapAnd(`brand_price_idx`, trigram index) |
 | Page 40, name A–Z | 0.64 / 0.053 ms | 0.44 / 7.0 ms | Index Scan on `name_sort_idx` (reads 800 rows, keeps 20) |
+| Unfiltered `price_asc` / `price_desc` / `rating_desc`, page 1 (after the ORDER BY fix; measured in the audit, 3 runs, cold then warm) | — | 4.6 / 0.012 / 0.009 ms; 0.57 / 0.009 / 0.008 ms; 0.78 / 0.010 / 0.008 ms | Index Scan (Backward) on `price_id_idx` / `rating_id_idx`. Before the fix: Seq Scan + Sort, ≈14 ms |
 
 At 1,000 rows the planner often prefers sequential scans because the whole table fits in a handful of pages. That's the correct choice, so the 1k plans are not a meaningful test of the indexes. The 100k column is the meaningful one. The remaining linear cost at 100k is the unfiltered `count(*)` (6–7 ms), discussed below.
 
