@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { setupTestApp, ids } from './helpers.js';
 import { FIXTURE_PRODUCTS, expectedIds } from './fixtures.js';
+import { productQuerySchema } from '../src/validation.js';
+import { buildProductQueries } from '../src/productQuery.js';
 
-const { search } = setupTestApp();
+const { search, pool } = setupTestApp();
 const SORTS = ['price_asc', 'price_desc', 'rating_desc', 'newest', 'name_asc'];
 const TOTAL = FIXTURE_PRODUCTS.length;
 
@@ -51,6 +53,30 @@ describe('sorting', () => {
 
   it('uses newest as the default sort', async () => {
     expect(ids(await search({ limit: 100 }))).toEqual(expectedIds({ sort: 'newest' }));
+  });
+
+  // Guards against ORDER BY resolving to a computed output alias (e.g. price::float8 AS price),
+  // which sorts correctly but can never use the B-tree index. The fixture is tiny, so
+  // sequential scans are disabled to see whether an index-ordered plan is possible at all.
+  it.each([
+    ['price_asc', 'products_price_id_idx'],
+    ['price_desc', 'products_price_id_idx'],
+    ['rating_desc', 'products_rating_id_idx'],
+    ['newest', 'products_created_at_id_idx'],
+    ['name_asc', 'products_name_sort_idx'],
+  ])('can serve sort=%s in index order from %s', async (sort, index) => {
+    const { page } = buildProductQueries(productQuerySchema.parse({ sort }));
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL enable_seqscan = off');
+      const plan = (await client.query(`EXPLAIN (COSTS OFF) ${page.text}`, page.values)).rows.map((r) => r['QUERY PLAN']).join('\n');
+      expect(plan).toContain(index);
+      expect(plan).not.toMatch(/\bSort\b/);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('applies sorting to filtered results', async () => {

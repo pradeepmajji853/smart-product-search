@@ -12,12 +12,16 @@
 //  * Every ORDER BY ends with the unique primary key so pagination is deterministic
 //    even when many rows share the same sort value.
 
+// Columns are table-qualified on purpose: the SELECT list aliases computed values back to
+// column names (price::float8 AS price), and an unqualified ORDER BY name resolves to that
+// output alias first - which would sort by the expression and bypass the (price, id) and
+// (rating, id) indexes.
 export const SORT_SQL = {
-  price_asc: 'price ASC, id ASC',
-  price_desc: 'price DESC, id DESC',
-  rating_desc: 'rating DESC, id DESC',
-  newest: 'created_at DESC, id DESC',
-  name_asc: 'lower(name) COLLATE "C" ASC, id ASC',
+  price_asc: 'products.price ASC, products.id ASC',
+  price_desc: 'products.price DESC, products.id DESC',
+  rating_desc: 'products.rating DESC, products.id DESC',
+  newest: 'products.created_at DESC, products.id DESC',
+  name_asc: 'lower(products.name) COLLATE "C" ASC, products.id ASC',
 };
 
 const PRODUCT_COLUMNS = `
