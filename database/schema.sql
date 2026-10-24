@@ -35,3 +35,17 @@ CREATE TABLE IF NOT EXISTS products (
 
 COMMENT ON TABLE products IS 'Product catalogue searched by GET /api/products';
 COMMENT ON COLUMN products.rating IS 'Average customer rating, 0.0 - 5.0';
+
+-- Vocabulary of catalogue words (3+ characters, not purely numeric) with their
+-- frequency. Used for typo correction ("sonny" -> "sony") and "did you mean"
+-- autocomplete hints. It is derived data: refresh it after the catalogue changes
+-- (database/seed.js does this automatically):
+--   REFRESH MATERIALIZED VIEW CONCURRENTLY search_vocabulary;
+CREATE MATERIALIZED VIEW IF NOT EXISTS search_vocabulary AS
+SELECT word, count(*)::int AS frequency
+FROM (
+  SELECT regexp_split_to_table(lower(name || ' ' || brand || ' ' || category || ' ' || description), '[^a-z0-9]+') AS word
+  FROM products
+) words
+WHERE length(word) >= 3 AND word !~ '^[0-9]+$'
+GROUP BY word;

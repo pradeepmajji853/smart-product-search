@@ -1,6 +1,6 @@
 import pg from 'pg';
 import { applySchema } from '../../database/setup.js';
-import { insertProducts } from '../../database/seed.js';
+import { insertProducts, refreshVocabulary } from '../../database/seed.js';
 import { FIXTURE_PRODUCTS } from './fixtures.js';
 import { getTestDatabaseUrl } from './testDb.js';
 
@@ -14,6 +14,7 @@ export default async function setup() {
     await client.query('BEGIN');
     await insertProducts(client, FIXTURE_PRODUCTS);
     await client.query('COMMIT');
+    await refreshVocabulary(client);
     await client.query('ANALYZE products');
   } finally {
     await client.end();

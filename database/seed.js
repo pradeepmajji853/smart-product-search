@@ -205,7 +205,14 @@ export async function seedDatabase(client, products) {
     await client.query('ROLLBACK');
     throw err;
   }
+  await refreshVocabulary(client);
   await client.query('ANALYZE products');
+}
+
+// Rebuilds the word list used for typo correction from the current catalogue.
+export async function refreshVocabulary(client) {
+  await client.query('REFRESH MATERIALIZED VIEW search_vocabulary');
+  await client.query('ANALYZE search_vocabulary');
 }
 
 async function main() {

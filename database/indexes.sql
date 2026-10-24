@@ -28,4 +28,10 @@ CREATE INDEX IF NOT EXISTS products_name_sort_idx     ON products ((lower(name) 
 CREATE INDEX IF NOT EXISTS products_in_stock_newest_idx
   ON products (created_at DESC, id DESC) WHERE in_stock;
 
+-- 5. Typo correction: trigram index on the vocabulary so "closest word" lookups
+--    (word % 'sonny') are index scans. The unique index also allows
+--    REFRESH MATERIALIZED VIEW CONCURRENTLY.
+CREATE UNIQUE INDEX IF NOT EXISTS search_vocabulary_word_key ON search_vocabulary (word);
+CREATE INDEX IF NOT EXISTS search_vocabulary_word_trgm_idx ON search_vocabulary USING gin (word gin_trgm_ops);
+
 ANALYZE products;
