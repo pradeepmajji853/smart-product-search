@@ -15,7 +15,9 @@ const INTEGER_RE = /^-?\d+$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g;
 
-const splitTerms = (q) => (q ? q.split(/\s+/).filter(Boolean) : []);
+// Guarded because object-level refinements still run when a field failed validation,
+// in which case q may hold the raw (invalid) input, e.g. an array from ?q=a&q=b.
+const splitTerms = (q) => (typeof q === 'string' && q ? q.split(/\s+/).filter(Boolean) : []);
 const isBlank = (v) => v === undefined || (typeof v === 'string' && v.trim() === '');
 
 // A query parameter that must appear at most once ("?minPrice=1&minPrice=2" is rejected).

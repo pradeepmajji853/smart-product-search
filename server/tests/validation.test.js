@@ -69,6 +69,12 @@ describe('input validation', () => {
     expect(res.body.error.details[0]).toEqual({ field: 'minPrice', message: 'must be provided only once' });
   });
 
+  it('rejects a repeated keyword with 400 rather than failing', async () => {
+    const res = await api.get('/api/products?q=a&q=b');
+    expect(res.status).toBe(400);
+    expect(res.body.error.details).toEqual([{ field: 'q', message: 'must be provided only once' }]);
+  });
+
   it('reports every invalid parameter at once', async () => {
     const res = await search({ minPrice: -1, sort: 'x', page: 0, inStock: 'nope' });
     expect(res.status).toBe(400);
