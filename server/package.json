@@ -6,7 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "NODE_ENV=production node src/index.js",
+    "start": "node src/index.js --production",
     "test": "vitest run",
     "test:watch": "vitest"
   },
