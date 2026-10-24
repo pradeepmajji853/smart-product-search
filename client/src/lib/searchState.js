@@ -9,7 +9,6 @@ export const SORT_OPTIONS = [
   { value: 'name_asc', label: 'Name: A–Z' },
 ];
 export const RATING_OPTIONS = ['4.5', '4', '3.5', '3'];
-export const PAGE_SIZE = 20;
 const SORT_VALUES = SORT_OPTIONS.map((o) => o.value);
 
 export const DEFAULT_STATE = Object.freeze({
