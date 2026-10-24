@@ -12,6 +12,9 @@
 //  * Every ORDER BY ends with the unique primary key so pagination is deterministic
 //    even when many rows share the same sort value.
 
+import { escapeLike } from './like.js';
+import { correctTerms } from './typoCorrection.js';
+
 // Columns are table-qualified on purpose: the SELECT list aliases computed values back to
 // column names (price::float8 AS price), and an unqualified ORDER BY name resolves to that
 // output alias first - which would sort by the expression and bypass the (price, id) and
@@ -28,12 +31,6 @@ const PRODUCT_COLUMNS = `
   id, sku, name, description, brand, category,
   price::float8 AS price, rating::float8 AS rating,
   in_stock AS "inStock", created_at AS "createdAt", image_url AS "imageUrl"`;
-
-// Backslash is the LIKE escape character (declared explicitly with ESCAPE below), so
-// escaping it plus % and _ makes the user's text match literally.
-export function escapeLike(value) {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-}
 
 export function buildWhere(filters) {
   const values = [];
@@ -84,7 +81,7 @@ LIMIT $${n + 1} OFFSET $${n + 2}`,
   };
 }
 
-export async function searchProducts(db, filters) {
+async function runSearch(db, filters) {
   const queries = buildProductQueries(filters);
   const [countResult, pageResult] = await Promise.all([db.query(queries.count), db.query(queries.page)]);
   const total = countResult.rows[0].total;
@@ -101,4 +98,20 @@ export async function searchProducts(db, filters) {
       hasPreviousPage: filters.page > 1,
     },
   };
+}
+
+// Runs the search; if a keyword search finds nothing (and exact=true was not requested),
+// retries once with typo-corrected terms. correctedQuery tells the client which query
+// the results are for, or is null when the results are for the query as typed.
+export async function searchProducts(db, filters) {
+  const result = await runSearch(db, filters);
+  if (result.pagination.total > 0 || filters.terms.length === 0 || filters.exact) {
+    return { ...result, correctedQuery: null };
+  }
+  const correctedTerms = await correctTerms(db, filters.terms);
+  if (!correctedTerms) return { ...result, correctedQuery: null };
+
+  const corrected = await runSearch(db, { ...filters, terms: correctedTerms });
+  if (corrected.pagination.total === 0) return { ...result, correctedQuery: null };
+  return { ...corrected, correctedQuery: correctedTerms.join(' ') };
 }

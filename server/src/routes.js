@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { filterOptionsQuerySchema, productQuerySchema } from './validation.js';
+import { filterOptionsQuerySchema, productQuerySchema, suggestionQuerySchema } from './validation.js';
+import { getSuggestions } from './suggestions.js';
 import { searchProducts } from './productQuery.js';
 import { renderPlaceholder } from './placeholder.js';
 import { HttpError } from './errors.js';
@@ -20,6 +21,15 @@ export function createApiRouter(db) {
     try {
       const filters = productQuerySchema.parse(req.query);
       res.json(await searchProducts(db, filters));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/suggestions', async (req, res, next) => {
+    try {
+      const query = suggestionQuerySchema.parse(req.query);
+      res.json({ suggestions: await getSuggestions(db, query) });
     } catch (err) {
       next(err);
     }

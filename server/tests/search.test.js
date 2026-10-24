@@ -58,8 +58,9 @@ describe('keyword search', () => {
 
   it('never matches text spanning two columns', async () => {
     // "Audio" (category) and "AUD-1001" (sku) are adjacent in the combined search text.
-    expect(await matchIds({ q: 'audioaud' })).toEqual([]);
-    expect(await matchIds({ q: 'sonyaudio' })).toEqual([]);
+    // exact=true: without it, typo correction would (rightly) rescue "audioaud" as "audio".
+    expect(await matchIds({ q: 'audioaud', exact: 'true' })).toEqual([]);
+    expect(await matchIds({ q: 'sonyaudio', exact: 'true' })).toEqual([]);
   });
 
   it('ignores surrounding and repeated whitespace', async () => {
@@ -151,6 +152,7 @@ describe('empty results and clearing filters', () => {
     expect(res.body).toEqual({
       data: [],
       pagination: { page: 1, limit: 20, total: 0, totalPages: 0, hasNextPage: false, hasPreviousPage: false },
+      correctedQuery: null,
     });
   });
 

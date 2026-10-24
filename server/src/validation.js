@@ -82,12 +82,13 @@ const keyword = single(
     .optional(),
 ).transform((q) => q ?? '');
 
-const booleanParam = single(
-  z
-    .enum(['true', 'false', '1', '0'], { message: 'inStock must be true or false' })
-    .transform((v) => v === 'true' || v === '1')
-    .optional(),
-);
+const booleanParam = (field) =>
+  single(
+    z
+      .enum(['true', 'false', '1', '0'], { message: `${field} must be true or false` })
+      .transform((v) => v === 'true' || v === '1')
+      .optional(),
+  );
 
 export const productQuerySchema = z
   .object({
@@ -97,7 +98,9 @@ export const productQuerySchema = z
     minPrice: decimal('minPrice', 0, MAX_PRICE),
     maxPrice: decimal('maxPrice', 0, MAX_PRICE),
     minRating: decimal('minRating', 0, 5),
-    inStock: booleanParam,
+    inStock: booleanParam('inStock'),
+    // exact=true disables typo correction ("search instead for ...").
+    exact: booleanParam('exact'),
     sort: single(
       z
         .enum(SORT_OPTIONS, { message: `sort must be one of: ${SORT_OPTIONS.join(', ')}` })
@@ -124,6 +127,15 @@ export const productQuerySchema = z
     }
   })
   // Whitespace-separated terms; every term must match (see productQuery.js).
+  .transform((value) => ({ ...value, terms: splitTerms(value.q) }));
+
+export const suggestionQuerySchema = z
+  .object({ q: keyword })
+  .superRefine((value, ctx) => {
+    if (splitTerms(value.q).length > MAX_SEARCH_TERMS) {
+      ctx.addIssue({ code: 'custom', path: ['q'], message: `q may contain at most ${MAX_SEARCH_TERMS} words` });
+    }
+  })
   .transform((value) => ({ ...value, terms: splitTerms(value.q) }));
 
 export const filterOptionsQuerySchema = z.object({ category: valueList('category') });

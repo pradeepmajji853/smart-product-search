@@ -131,6 +131,7 @@ describe('pagination', () => {
     expect(res.body).toEqual({
       data: [],
       pagination: { page: 99, limit: 7, total: 20, totalPages: 3, hasNextPage: false, hasPreviousPage: true },
+      correctedQuery: null,
     });
   });
 
