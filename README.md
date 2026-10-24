@@ -22,6 +22,8 @@ A product catalogue with keyword search, combinable filters, sorting and server-
 - **Filters:** category, one or more brands, min/max price (inclusive), minimum rating and in-stock only. All of them combine with the keyword search.
 - **Sorting:** price low→high, price high→low, highest rating, newest first, name A–Z. Every sort has a unique tie-breaker, so pagination stays stable when many products share a value.
 - **Server-side pagination:** 20 per page by default, accurate totals, and an empty page with the correct total when the page number is out of range.
+- **Typo-tolerant search:** when a search finds nothing, misspelt words are corrected against the catalogue's vocabulary using `pg_trgm` similarity (`sonny hedphones` → `sony headphones`). The page says which query the results are for and offers "Search instead for…".
+- **Autocomplete:** after 3 characters the search box suggests matching brands, categories and product names (or "Did you mean…?"), with full keyboard support (↑/↓, Enter, Escape) and the same protection against outdated responses as the main search.
 - **URL state:** search, filters, sort and page live in the query string, so you can bookmark or share a view and use the browser's back/forward buttons.
 - **UX:** 300 ms debounced search; protection against outdated responses (AbortController plus a request-id guard); loading skeleton and "updating" indicator; error message with retry; empty state; clear-all and per-filter chips; client-side price validation; highlighting of matched terms; responsive layout with a collapsible filter panel on mobile.
 - **API hardening:** Zod validation with clear 400 errors, parameterized SQL only, escaped LIKE wildcards, whitelisted ORDER BY, central error handler that never leaks SQL or credentials, 503 when the database is down, and a 5 s statement timeout.
@@ -40,6 +42,8 @@ These were captured from the running application, with Chrome driven by Playwrig
 | [Price validation](docs/screenshots/06-price-validation.png) | Client-side min > max error |
 | [Mobile](docs/screenshots/07-mobile.png) / [mobile filters](docs/screenshots/08-mobile-filters.png) | 390 px wide layout |
 | [Error state](docs/screenshots/09-error-state.png) | Database stopped: 503 shown with retry |
+| [Autocomplete](docs/screenshots/10-autocomplete.png) | Brand and product suggestions for `son` |
+| [Typo correction](docs/screenshots/11-typo-correction.png) | `sonny hedphones` corrected to `sony headphones` |
 
 ## Prerequisites
 
@@ -99,8 +103,8 @@ npm start
 
 ```bash
 npm test               # server + client
-npm run test:server    # 96 tests, mostly HTTP + real PostgreSQL integration (needs TEST_DATABASE_URL)
-npm run test:client    # 18 React tests (no database needed)
+npm run test:server    # 113 tests, mostly HTTP + real PostgreSQL integration (needs TEST_DATABASE_URL)
+npm run test:client    # 28 React tests (no database needed)
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for coverage details and the manual verification that was performed.
@@ -143,7 +147,9 @@ docs/                   API, implementation and testing docs, screenshots
 
 ## Known limitations
 
-- **Substring matching, not relevance ranking.** Results follow the selected sort order. There is no "best match" ordering, stemming ("phones" won't match "phone" unless it's a substring) or typo tolerance. See [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md#scaling-to-100000-products) for how to add these.
+- **Substring matching, not relevance ranking.** Results follow the selected sort order. There is no "best match" ordering or stemming ("phones" won't match "phone" unless it's a substring). See [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md#scaling-to-100000-products) for how to add these.
+- **Typo correction is trigram-based.** It only runs when a search has no results and fixes typical misspellings (`sonny`, `hedphones`, `camra`). It misses swapped letters in short words (`phnoe`) and words more than about 70% different. The vocabulary is a materialized view, refreshed by `db:seed`; any other way of changing products must run `REFRESH MATERIALIZED VIEW CONCURRENTLY search_vocabulary`.
+- **Autocomplete starts at 3 characters**, because shorter input can't use the trigram index (at 100k products, a 2-character lookup took ~120 ms vs 1–6 ms).
 - **One- and two-character terms can't use the trigram index** and fall back to a sequential scan. That's fast at 1k rows (≈1 ms) but grows linearly with table size.
 - **OFFSET pagination.** Deep pages cost more as the offset grows, and rows inserted between page requests can shift results by one. Page numbers are capped at 10,000. Keyset pagination is the documented upgrade path.
 - **Separate count and page queries** run in parallel without a shared snapshot, so a concurrent write could make `total` momentarily disagree with the page contents.

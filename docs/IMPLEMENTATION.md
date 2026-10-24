@@ -160,6 +160,47 @@ Results on the development machine: Apple M4, PostgreSQL 16.14 with the default 
 
 At 1,000 rows the planner often prefers sequential scans because the whole table fits in a handful of pages. That's the correct choice, so the 1k plans are not a meaningful test of the indexes. The 100k column is the meaningful one. The remaining linear cost at 100k is the unfiltered `count(*)` (6–7 ms), discussed below.
 
+## Typo tolerance
+
+Typo correction runs **only when a keyword search finds nothing**, so it never changes results that already match (`server/src/typoCorrection.js`).
+
+1. **Vocabulary.** `search_vocabulary` is a materialized view of every word (3+ characters, not purely numeric) in product names, brands, categories and descriptions, with its frequency: 1,155 words for the 1k seed, 2,683 for 100k. It has a unique index (which allows `REFRESH … CONCURRENTLY`) and a trigram GIN index. `db:seed` refreshes it.
+2. **Per word.** A word that matches some product (`EXISTS … search_text ILIKE`) is kept. Otherwise it's replaced by the closest vocabulary word: `word % $1 AND similarity(word, $1) >= 0.3`, ordered by similarity, then frequency, then alphabetically. That order is deterministic, and frequency breaks ties toward common words. Words shorter than 3 characters are not corrected.
+3. **Rerun.** If every word now matches and at least one changed, the corrected query runs as a normal exact search. Filters, sorting and pagination therefore behave the same as for any other query, and `correctedQuery` tells the client what was searched. If no correction is possible, or the corrected search is also empty, the original empty result is returned. `exact=true` disables correction.
+
+**Why only on zero results, and why per word.** Correcting a query that already has results would hide exact matches. Checking each word separately means `sony laptop` is never rewritten just because no Sony laptop exists: both words are valid, and only the combination is empty. The same applies to valid words excluded by filters (`?q=sony&brand=Apple`).
+
+**Threshold.** 0.3 (pg_trgm's default) was chosen by measuring real typos against the seeded vocabulary:
+
+| Input | Best match (similarity) | Result |
+| --- | --- | --- |
+| `sonny`, `hedphones`, `headfones`, `wireles`, `laptp`, `samsng`, `camra`, `addidas`, `bluetoth`, `keybord` | sony 0.57, headphones 0.62 / 0.50, wireless 0.70, laptop 0.44, samsung 0.50, camera 0.44, adidas 0.67, bluetooth 0.73, keyboard 0.55 | corrected |
+| `refrigerator`, `blender` | refresh 0.24, grinder 0.23 | correctly *not* corrected |
+| `sny`, `phnoe`, `nkie` | sony 0.29, phone 0.20, neo 0.13 | missed: short words and transposed letters |
+
+Transpositions in short words are trigram matching's known weak spot. Adding `fuzzystrmatch`'s `levenshtein()` to re-rank candidates would cover them, at the cost of a second extension.
+
+**Cost.** It only runs on empty results: one indexed `EXISTS` per word plus one vocabulary lookup per unknown word, run in parallel. Measured end to end at 100k products: `sonny` 4.9 ms, `hedphones` 4.0 ms, `sonny hedphones` 3.3 ms, unrecognizable `zzqxv` 0.8 ms (medians of 5 runs).
+
+## Autocomplete
+
+`GET /api/suggestions?q=` (`server/src/suggestions.js`) returns, in order:
+
+1. up to 3 brands starting with `q`;
+2. up to 2 categories containing it;
+3. up to 5 products whose names contain every word, names starting with `q` first, then by rating and id.
+
+If nothing matches, it returns the typo correction as a "Did you mean…?" entry. Each query also filters on `search_text ILIKE`, so the trigram index narrows the candidates. That predicate is redundant for correctness but is what makes the queries fast.
+
+Measured at 100k products: `son` 6.3 ms, `sony wire` 1.2 ms, `headphones` 3.4 ms, `sonny` 0.9 ms. With 2 characters (`so`) the index can't help and the three queries took **122 ms**. Autocomplete therefore requires at least one word of 3+ characters, enforced by the server and mirrored by the client.
+
+**Frontend** (`SearchInput.jsx`, `useSuggestions.js`):
+- Suggestions are fetched 150 ms after typing pauses, separately from the 300 ms search commit.
+- They use the same abort + request-id protection as product results; a test makes an older response arrive late and asserts it's ignored.
+- The input implements the ARIA combobox pattern: `aria-expanded`, `aria-controls`, `aria-activedescendant`, ↑/↓, Enter, and Escape. Options are picked on `mousedown`, so the input doesn't blur first.
+- Picking a brand or category applies that filter and clears the text. Picking a product or a correction searches for it.
+- A failed suggestions request just shows no dropdown. Search itself is unaffected.
+
 ## Frontend: debouncing, races and URL state
 
 - **Debouncing.** `SearchInput` keeps the text the user is typing locally and commits it 300 ms after the last keystroke, or immediately on Enter. Committing the same trimmed value twice is a no-op. Price inputs debounce at 500 ms, validate locally (negative values or min > max show an inline error), and only commit a valid range.
@@ -177,14 +218,16 @@ The 100k measurements above show that the current design already holds at that s
 
 1. **Count cost.** Unfiltered or barely filtered `count(*)` is linear in table size (6–7 ms at 100k, so roughly 70 ms at 1M). Options: cache counts for common filter combinations for a short time; for the unfiltered catalogue use the planner's estimate (`pg_class.reltuples`); or cap counting (`SELECT count(*) FROM (SELECT 1 ... LIMIT 10001)`) and show "10,000+".
 2. **Keyset (cursor) pagination for deep pages.** Replace `OFFSET n` with `WHERE (price, id) > ($last_price, $last_id)` using the same tie-breaker. The cost per page then stays constant and pages don't shift under concurrent inserts. Page-number navigation can stay for the first few pages.
-3. **Relevance and language features.** Add a `tsvector` column with a GIN index and `websearch_to_tsquery` for stemming and ranking (`ts_rank`), keeping trigram `ILIKE` for SKU and partial-word matching. `pg_trgm`'s `similarity()` / `%` operator can then provide typo tolerance ("did you mean") on the same trigram index.
+3. **Relevance and language features.** Add a `tsvector` column with a GIN index and `websearch_to_tsquery` for stemming and ranking (`ts_rank`), keeping trigram `ILIKE` for SKU and partial-word matching. Typo tolerance is already trigram-based (see above). At larger scale, the vocabulary refresh would move from seed time to a scheduled `REFRESH MATERIALIZED VIEW CONCURRENTLY`, or to an incrementally maintained table.
 4. **Normalise categories and brands** into lookup tables with integer foreign keys. Indexes get smaller, renames are safe, and `/api/filters` becomes a cheap lookup. Faceted counts for the current result set can be computed with `GROUP BY` on the filtered set, or precomputed.
 5. **Operational.** Tune `random_page_cost` / `effective_cache_size` for SSDs, run `ANALYZE` after bulk loads, put PgBouncer in front of PostgreSQL, add a read replica for search traffic, and add HTTP caching (ETag / `Cache-Control: max-age=30`) on `/api/filters`.
 6. **Beyond about 10M products, or for advanced relevance, synonyms, facets and analytics:** move search to OpenSearch, Elasticsearch, Meilisearch or Typesense, fed from PostgreSQL by change data capture, with PostgreSQL remaining the source of truth.
 
 ## Known limitations
 
-- Substring matching only: no relevance ranking, stemming, synonyms or typo tolerance (see Scaling point 3).
+- Substring matching only: no relevance ranking, stemming or synonyms (see Scaling point 3).
+- Typo correction applies only to zero-result searches and misses transpositions in short words (`phnoe`). The vocabulary must be refreshed after catalogue changes.
+- Autocomplete needs 3+ characters.
 - One- and two-character terms can't use the trigram index.
 - OFFSET pagination: deep pages get slower, and concurrent writes can shift rows between page requests. Page numbers are capped at 10,000.
 - The count and page queries don't share a snapshot, so a concurrent write can make them momentarily disagree.

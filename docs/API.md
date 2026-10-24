@@ -7,6 +7,7 @@ All responses are JSON except `/api/images/...`. All endpoints are read-only `GE
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/products` | Search, filter, sort and paginate products |
+| `GET /api/suggestions` | Autocomplete suggestions for the search box |
 | `GET /api/filters` | Category and brand options (with counts) and the overall price range |
 | `GET /api/health` | Liveness and database connectivity |
 | `GET /api/images/:category/:sku.svg` | Generated SVG placeholder image for a product |
@@ -29,12 +30,23 @@ All responses are JSON except `/api/images/...`. All endpoints are read-only `GE
 | `sort` | enum | `newest` | `price_asc`, `price_desc`, `rating_desc`, `newest`, `name_asc` |
 | `page` | integer 1–10000 | `1` | 1-based page number |
 | `limit` | integer 1–100 | `20` | Page size |
+| `exact` | `true` \| `false` \| `1` \| `0` | `false` | `true` turns off typo correction (see below) |
 
 How parameters combine:
 
 - All supplied criteria are combined with **AND**. Multiple values of the same `category`/`brand` parameter combine with **OR**.
 - An empty value (`?brand=&minPrice=`) means "not set". Unknown parameters are ignored.
-- Single-value parameters (`q`, prices, `minRating`, `inStock`, `sort`, `page`, `limit`) may appear only once.
+- Single-value parameters (`q`, prices, `minRating`, `inStock`, `sort`, `page`, `limit`, `exact`) may appear only once.
+
+### Typo correction
+
+If a keyword search returns **no results**, the API retries once with corrected words, unless `exact=true` is set:
+
+- Words that match at least one product are kept as they are.
+- Each other word is replaced by the most similar word in the catalogue vocabulary (`pg_trgm` similarity ≥ 0.3; words of 3+ characters).
+- If any word has no close match, or the corrected search also finds nothing, the original empty result is returned.
+
+When correction is applied, `correctedQuery` holds the query the results are for. Filters, sorting and pagination apply to the corrected query as usual. `correctedQuery` is `null` in every other case. A valid word is never "corrected" just because filters exclude it: `?q=sony&brand=Apple` returns 0 results and `correctedQuery: null`.
 
 ### Sort orders
 
@@ -60,7 +72,8 @@ Every sort ends with the product `id` as a unique tie-breaker, so the ordering i
     "totalPages": 5,
     "hasNextPage": true,
     "hasPreviousPage": false
-  }
+  },
+  "correctedQuery": null
 }
 ```
 
@@ -119,7 +132,8 @@ curl "http://localhost:4000/api/products?q=sony%20headphones&inStock=true&maxPri
       "imageUrl": "/api/images/audio/AUD-SON-00519.svg"
     }
   ],
-  "pagination": { "page": 1, "limit": 2, "total": 2, "totalPages": 1, "hasNextPage": false, "hasPreviousPage": false }
+  "pagination": { "page": 1, "limit": 2, "total": 2, "totalPages": 1, "hasNextPage": false, "hasPreviousPage": false },
+  "correctedQuery": null
 }
 ```
 
@@ -142,8 +156,24 @@ curl "http://localhost:4000/api/products?q=zzzz"
 ```
 
 ```json
-{"data":[],"pagination":{"page":1,"limit":20,"total":0,"totalPages":0,"hasNextPage":false,"hasPreviousPage":false}}
+{"data":[],"pagination":{"page":1,"limit":20,"total":0,"totalPages":0,"hasNextPage":false,"hasPreviousPage":false},"correctedQuery":null}
 ```
+
+**Misspelt search (typo correction)**
+
+```bash
+curl "http://localhost:4000/api/products?q=sonny%20hedphones&limit=1"
+```
+
+```json
+{
+  "data": [ { "id": 735, "sku": "AUD-SON-00735", "name": "Sony Sport Wireless Headphones D25", "...": "..." } ],
+  "pagination": { "page": 1, "limit": 1, "total": 3, "totalPages": 3, "hasNextPage": true, "hasPreviousPage": false },
+  "correctedQuery": "sony headphones"
+}
+```
+
+`?q=sonny%20hedphones&exact=true` returns the empty result with `"correctedQuery": null`.
 
 **Page out of range**
 
@@ -152,7 +182,7 @@ curl "http://localhost:4000/api/products?category=Audio&page=999"
 ```
 
 ```json
-{"data":[],"pagination":{"page":999,"limit":20,"total":84,"totalPages":5,"hasNextPage":false,"hasPreviousPage":true}}
+{"data":[],"pagination":{"page":999,"limit":20,"total":84,"totalPages":5,"hasNextPage":false,"hasPreviousPage":true},"correctedQuery":null}
 ```
 
 ### Validation errors (400)
@@ -203,6 +233,47 @@ curl "http://localhost:4000/api/products?minPrice=-5&maxPrice=abc&sort=cheapest&
 | 500 | `INTERNAL_ERROR` | Any other unexpected error. The body is always `{"error":{"code":"INTERNAL_ERROR","message":"An unexpected error occurred"}}`, and SQL, stack traces and connection details are only logged server-side. |
 
 ---
+
+## GET /api/suggestions
+
+Autocomplete for the search box.
+
+| Parameter | Type | Rules |
+| --- | --- | --- |
+| `q` | string | Same rules as `/api/products` (max 100 characters, max 10 words, given once). Returns no suggestions unless at least one word has **3+ characters**, because shorter input can't use the trigram index. |
+
+Suggestions are returned in this order:
+
+1. Up to 3 **brands** starting with `q`, by number of products.
+2. Up to 2 **categories** containing `q`.
+3. Up to 5 **products** whose name contains every word, names starting with `q` first, then by rating and id.
+4. If nothing matches, a single **correction** from typo correction, when one exists.
+
+All matching is case-insensitive, and `%` and `_` are literal.
+
+```bash
+curl "http://localhost:4000/api/suggestions?q=son"
+```
+
+```json
+{
+  "suggestions": [
+    { "type": "brand", "value": "Sony", "count": 40 },
+    { "type": "product", "id": 485, "value": "Sony Waterproof Mirrorless Camera J45", "brand": "Sony", "category": "Cameras" },
+    "... up to 4 more products"
+  ]
+}
+```
+
+```bash
+curl "http://localhost:4000/api/suggestions?q=sonny"
+```
+
+```json
+{ "suggestions": [ { "type": "correction", "value": "sony" } ] }
+```
+
+An empty or too-short `q` returns `{"suggestions": []}`. Invalid input returns the same 400 `VALIDATION_ERROR` format as `/api/products`.
 
 ## GET /api/filters
 
